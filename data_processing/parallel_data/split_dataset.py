@@ -3,7 +3,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 import os
 
-def split_dataset(X, y, test_size=0.15, val_size=0.15, random_state=42):
+def split_dataset(data, test_size=0.30, random_state=42):
     """ 
     Split dataset into train/validation/test sets.
     
@@ -17,23 +17,30 @@ def split_dataset(X, y, test_size=0.15, val_size=0.15, random_state=42):
     Returns:
         X_train, X_val, X_test, y_train, y_val, y_test
     """
-    X_temp, X_test, y_temp, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state, stratify=y
+    # X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.2, random_state=42)
+    
+    training_data, temp_data = train_test_split(
+        data,
+        test_size=test_size, 
+        random_state=random_state, 
+        shuffle=True
     )
     
-    val_size_adjusted = val_size / (1 - test_size)
+    # val_size_adjusted = val_size / (1 - test_size)
     
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_temp, y_temp, test_size=val_size_adjusted, 
-        random_state=random_state, stratify=y_temp
+    val_data, test_data = train_test_split(
+        temp_data,
+        test_size=0.5, 
+        random_state=random_state, 
+        shuffle=True
     )
+
+    print(f"Train set: {len(training_data)} samples ({len(training_data)/len(data)*100:.1f}%)")
+    print(f"Validation set: {len(val_data)} samples ({len(val_data)/len(data)*100:.1f}%)")
+    print(f"Test set: {len(test_data)} samples ({len(test_data)/len(data)*100:.1f}%)")
     
-    print(f"Source set: {len(X)} samples")
-    print(f"Train set: {len(X_train)} samples ({len(X_train)/len(X)*100:.1f}%)")
-    print(f"Validation set: {len(X_val)} samples ({len(X_val)/len(X)*100:.1f}%)")
-    print(f"Test set: {len(X_test)} samples ({len(X_test)/len(X)*100:.1f}%)")
-    
-    return X_train, X_val, X_test, y_train, y_val, y_test
+    return training_data, val_data, test_data
 
 
 
@@ -41,11 +48,12 @@ if __name__ == "__main__":
     input_filename = 'parallel_data_all.csv'
     input_path = os.path.join("output", input_filename)
     df = pd.read_csv(input_path) 
-    X_train, X_val, X_test, y_train, y_val, y_test = split_dataset(
-        X=df['warao_sentences'], 
-        y=df['spanish_sentences'], 
-        test_size=0.15, 
-        val_size=0.15, 
+    print(f"Source set: {len(df)} samples")
+    training_data, val_data, test_data = split_dataset(
+        # X=df['warao_sentence'], 
+        # y=df['spanish_sentence'],
+        data=df,
+        test_size=0.30,  
         random_state=42
     )
     
@@ -58,9 +66,9 @@ if __name__ == "__main__":
     
     
     # Save data as CSVs
-    if isinstance(X_train, pd.DataFrame):
-        pd.concat([X_train, y_train], axis=1).to_csv('parallel_train.csv', index=False)
-        pd.concat([X_val, y_val], axis=1).to_csv('parallel_val.csv', index=False)
-        pd.concat([X_test, y_test], axis=1).to_csv('parallel_test.csv', index=False)
+    if isinstance(training_data, pd.DataFrame):
+        training_data.to_csv(os.path.join("output", 'parallel_train.csv'), index=False)
+        val_data.to_csv(os.path.join("output", 'parallel_val.csv'), index=False)
+        test_data.to_csv(os.path.join("output", 'parallel_test.csv'), index=False)
     
     print("Splits saved successfully!")
