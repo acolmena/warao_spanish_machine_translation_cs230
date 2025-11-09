@@ -3,23 +3,22 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 import os
 
+RANDOM_STATE = 42
+TEST_SIZE = 0.30
+
 def split_dataset(data, test_size=0.30, random_state=42):
     """ 
     Split dataset into train/validation/test sets.
     
     Args:
-        X: Warao sentences 
-        y: Spanish translations 
+        data: Warao-Spanish parallel data 
         test_size: percentage of data used for test set, 15% 
         val_size: percentage of data used for validation set, 15% 
-        random_state: Random seed for reproducibility, so we always get the same split
+        random_state: random seed for reproducibility, so we always get the same split
     
     Returns:
-        X_train, X_val, X_test, y_train, y_val, y_test
-    """
-    # X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    # X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.2, random_state=42)
-    
+        training_data, val_data, test_data
+    """    
     training_data, temp_data = train_test_split(
         data,
         test_size=test_size, 
@@ -27,7 +26,6 @@ def split_dataset(data, test_size=0.30, random_state=42):
         shuffle=True
     )
     
-    # val_size_adjusted = val_size / (1 - test_size)
     
     val_data, test_data = train_test_split(
         temp_data,
@@ -36,39 +34,42 @@ def split_dataset(data, test_size=0.30, random_state=42):
         shuffle=True
     )
 
+    print("\n" + "=" * 50)
     print(f"Train set: {len(training_data)} samples ({len(training_data)/len(data)*100:.1f}%)")
     print(f"Validation set: {len(val_data)} samples ({len(val_data)/len(data)*100:.1f}%)")
     print(f"Test set: {len(test_data)} samples ({len(test_data)/len(data)*100:.1f}%)")
-    
+    print("=" * 50)
+
     return training_data, val_data, test_data
 
 
 
 if __name__ == "__main__":   
     input_filename = 'parallel_data_all.csv'
-    input_path = os.path.join("output", input_filename)
+    input_path = os.path.join("input", input_filename)
     df = pd.read_csv(input_path) 
+
+    print("\n" + "=" * 50)
     print(f"Source set: {len(df)} samples")
+    print(f"Preview: {df.head(7)}")
+    print("=" * 50)
     training_data, val_data, test_data = split_dataset(
-        # X=df['warao_sentence'], 
-        # y=df['spanish_sentence'],
         data=df,
-        test_size=0.30,  
-        random_state=42
+        test_size=TEST_SIZE,  
+        random_state=RANDOM_STATE
     )
     
 
-    
-    # Example 4: Save splits to disk
     print("\n" + "=" * 50)
-    print("EXAMPLE 4: Saving Splits")
+    print("Saving splits . . .")
     print("=" * 50)
+
     
     
-    # Save data as CSVs
+    # save split data to CSVs
     if isinstance(training_data, pd.DataFrame):
         training_data.to_csv(os.path.join("output", 'parallel_train.csv'), index=False)
         val_data.to_csv(os.path.join("output", 'parallel_val.csv'), index=False)
         test_data.to_csv(os.path.join("output", 'parallel_test.csv'), index=False)
     
-    print("Splits saved successfully!")
+    print("\nSplits saved successfully!")
