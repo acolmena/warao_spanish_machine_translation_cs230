@@ -4,16 +4,17 @@ from sklearn.model_selection import train_test_split
 import os
 
 RANDOM_STATE = 42
-TEST_SIZE = 0.30
+HOLDOUT_SIZE = 0.30
+VAL_RATIO = 0.5
 
-def split_dataset(data, test_size=0.30, random_state=42):
+def split_dataset(data, holdout_size=0.30, val_ratio=0.5, random_state=42):
     """ 
     Split dataset into train/validation/test sets.
     
     Args:
         data: Warao-Spanish parallel data 
-        test_size: percentage of data used for test set, 15% 
-        val_size: percentage of data used for validation set, 15% 
+        holdout_size: percentage of data used for holdout (includes test and validation), 15% 
+        val_ratio: percentage of holdout data used for validation, 50% 
         random_state: random seed for reproducibility, so we always get the same split
     
     Returns:
@@ -21,7 +22,7 @@ def split_dataset(data, test_size=0.30, random_state=42):
     """    
     training_data, temp_data = train_test_split(
         data,
-        test_size=test_size, 
+        test_size=holdout_size, 
         random_state=random_state, 
         shuffle=True
     )
@@ -29,7 +30,7 @@ def split_dataset(data, test_size=0.30, random_state=42):
     
     val_data, test_data = train_test_split(
         temp_data,
-        test_size=0.5, 
+        test_size=val_ratio, 
         random_state=random_state, 
         shuffle=True
     )
@@ -55,7 +56,8 @@ if __name__ == "__main__":
     print("=" * 50)
     training_data, val_data, test_data = split_dataset(
         data=df,
-        test_size=TEST_SIZE,  
+        holdout_size=HOLDOUT_SIZE, 
+        val_ratio=VAL_RATIO, 
         random_state=RANDOM_STATE
     )
     
@@ -64,7 +66,7 @@ if __name__ == "__main__":
     print("Saving splits . . .")
     print("=" * 50)
 
-    
+    os.makedirs("output", exist_ok=True)
     
     # save split data to CSVs
     if isinstance(training_data, pd.DataFrame):
