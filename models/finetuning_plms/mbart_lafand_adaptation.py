@@ -1,0 +1,181 @@
+
+"""
+ mBART Finetuning
+This a script that performs basic finetuning of mBART-50 on our data.
+
+It leverages the ML HuggingFace classes for training a sequence model and tokenizing.
+
+This code is adapted from the https://github.com/masakhane-io/lafand-mt/tree/main.
+
+**Citation**
+> Adelani, D., Alabi, J., Fan, A., Kreutzer, J., Shen, X., Reid, M., Ruiter, D., 
+Klakow, D., Nabende, P., Chang, E., Gwadabe, T., Sackey, F., Dossou, B. F. P., 
+Emezue, C., Leong, C., Beukman, M., Muhammad, S., Jarso, G., Yousuf, O., Niyongabo Rubungo, 
+A., … Manthalu, S. (2022). A few thousand translations go a long way! Leveraging 
+pre-trained models for African news translation. In Proceedings of the 2022 
+Conference of the North American Chapter of the Association for Computational 
+Linguistics: Human Language Technologies (pp. 3053–3070). Association for 
+Computational Linguistics. https://doi.org/10.18653/v1/2022.naacl-main.223
+"""
+
+# !pip install sacrebleu==2.0.0
+# pip install -U peft accelerate
+# !pip install evaluate
+
+import os
+import sys
+import logging
+import random
+import torch
+import numpy as np
+from datasets import load_dataset
+from evaluate import load
+from transformers import (
+    AutoConfig,
+    AutoModelForSeq2SeqLM,
+    AutoTokenizer,
+    DataCollatorForSeq2Seq,
+    Seq2SeqTrainer,
+    Seq2SeqTrainingArguments,
+    set_seed,
+)
+
+def start_training(model_name_or_path, train_file, val_file, test_file, output_dir,
+                   source_lang="pt_XX", target_lang="es_XX",
+                   max_source_length=128, max_target_length=128,
+                   num_train_epochs=3, batch_size=8, learning_rate=1e-5, num_beams=4):
+
+    # log
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+
+    print("\n" + "=" * 50)
+    print("Loading datasets . . . ")
+    print("=" * 50)
+    data_files = {"train": train_file, "validation": val_file, "test": test_file}
+    raw_datasets = load_dataset("csv", data_files=data_files)
+
+    # load model and tokenizer
+    print("\n" + "=" * 50)
+    print(f"Loading {model_name_or_path} model and tokenizer . . . ")
+    print("=" * 50)
+    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_name_or_path)
+    config = AutoConfig.from_pretrained(model_name_or_path)
+
+    # set language codes
+    tokenizer.src_lang = source_lang
+    tokenizer.tgt_lang = target_lang
+    model.config.forced_bos_token_id = tokenizer.lang_code_to_id[target_lang]
+
+    # tokenizing
+    def preprocess_function(examples):
+        inputs = examples["warao_sentence"]
+        targets = examples["spanish_sentence"]
+        model_inputs = tokenizer(inputs, max_length=max_source_length, truncation=True)
+        labels = tokenizer(targets, max_length=max_target_length, truncation=True)
+        model_inputs["labels"] = labels["input_ids"]
+        return model_inputs
+
+    tokenized_datasets = raw_datasets.map(preprocess_function, batched=True)
+
+    # data collator to handle different sizes of sentences
+    data_collator = DataCollatorForSeq2Seq(tokenizer, model=model)
+
+    metric = load("sacrebleu")
+
+    def postprocess_text(preds, labels):
+        preds = [p.strip() for p in preds]
+        labels = [[l.strip()] for l in labels]
+        return preds, labels
+
+    def compute_metrics(eval_preds):
+        preds, labels = eval_preds
+        if isinstance(preds, tuple):
+            preds = preds[0]
+        decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
+        labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
+        decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
+        decoded_preds, decoded_labels = postprocess_text(decoded_preds, decoded_labels)
+        result = metric.compute(predictions=decoded_preds, references=decoded_labels)
+        return {"bleu": round(result["score"], 4)}
+
+
+    training_args = Seq2SeqTrainingArguments(
+        output_dir=output_dir,
+        eval_strategy="epoch",
+        save_strategy="epoch",
+        learning_rate=learning_rate,
+        per_device_train_batch_size=batch_size,
+        per_device_eval_batch_size=batch_size,
+        weight_decay=0.01,
+        save_total_limit=1,
+        num_train_epochs=num_train_epochs,
+        predict_with_generate=True,
+        generation_max_length=max_target_length,
+        generation_num_beams=num_beams,
+        logging_dir=os.path.join(output_dir, "logs"),
+        logging_steps=100,
+    )
+
+    trainer = Seq2SeqTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=tokenized_datasets["train"],
+        eval_dataset=tokenized_datasets["validation"],
+        tokenizer=tokenizer,
+        data_collator=data_collator,
+        compute_metrics=compute_metrics,
+    )
+
+    print("\n" + "=" * 50)
+    print("Finetuning . . . ")
+    print("=" * 50)
+    trainer.train()
+    trainer.save_model()
+    print("Model saved!")
+
+
+    # evaluate
+    eval_results = trainer.evaluate()
+    logger.info(f"BLEU on validation: {eval_results}")
+
+    # create predictions for 500 random examples in test set for later evaluative use
+    random.seed(21)
+    num_samples = 500
+    sampled_test_pairs = random.sample(tokenized_datasets["test"], min(num_samples, len(tokenized_datasets["test"])))
+    predict_results = trainer.predict(sampled_test_pairs)
+    preds = tokenizer.batch_decode(predict_results.predictions, skip_special_tokens=True)
+    preds = [p.strip().replace("\n", " ") for p in preds]
+
+    # save predictions
+    os.makedirs(output_dir, exist_ok=True)
+    pred_file = os.path.join(output_dir, "mBART50_predictions.txt")
+    with open(pred_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(preds))
+
+    logger.info(f"Predictions saved to {pred_file}")
+    return eval_results
+
+# !pip install protobuf==3.20.3
+
+if __name__ == "__main__":  
+    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    print("USING DEVICE:", device)
+
+    start_training(
+        model_name_or_path="facebook/mbart-large-50",
+        train_file="./input/parallel_train.csv",
+        val_file="./input/parallel_val.csv",
+        test_file="./input/parallel_test.csv",
+        output_dir="./mbart50-finetuned-warao-es",
+        source_lang="pt_XX",    # fake code for Warao, this was suggested by the Few Thousand Translations paper
+        target_lang="es_XX",    # Spanish code
+        num_train_epochs=3,
+        batch_size=64,
+    )
