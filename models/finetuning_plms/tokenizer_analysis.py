@@ -3,6 +3,8 @@ from datasets import load_dataset
 import random
 from tqdm.auto import tqdm, trange
 import logging
+import sys
+import pandas as pd
 
 """
 Different analyses on tokenizer to see how Warao text is being tokenized
@@ -32,37 +34,43 @@ def tok_analysis(model_name=None, dataset_path=None, warao_col=None, spanish_col
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
 
-    # load model +  tokenizer
+    # load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
 
     # load dataset
     data_files = {'train': dataset_path}
-    dataset = load_dataset('csv', data_files=data_files)
-    logger.info(dataset[:10])
+    dataset = load_dataset('csv', data_files=data_files)['train']
+    logger.info(f"\nLoaded dataset from {dataset_path}")
+    print(f"\nDataset preview: {dataset[:2]}")
 
-    # randomly sample 2000 rows of Warao text
-    rnd_warao_sents = random.sample(dataset[warao_col], 2000)
-    logger.log(rnd_warao_sents)
+    # Tokenization analysis
+    token_lengths = []
+    all_tokens = []
+    for example in dataset:
+        sentence = example[warao_col]
+        tokens = tokenizer.tokenize(sentence)
+        all_tokens += tokens
+        token_lengths.append(len(tokens))
 
-    # # Tokenization analysis
-    # token_lengths = []
-    # all_tokens = []
-    # for example in dataset['train']:
-    #     text = example[warao_col]
-    #     tokens = tokenizer.tokenize(text)
-    #     all_tokens += tokens
-    #     token_lengths.append(len(tokens))
+    # breakpoint()
+    all_uniq_tokens = list(set(all_tokens))
+    print(f"\nTotal unique tokens in Warao dataset: {len(all_uniq_tokens)}")
+    print(f"\nPreview of unique tokens: {all_uniq_tokens[:5]}")
+    series_tokens = pd.Series(all_tokens)
+    series_tok_lens = series_tokens.apply(len)
+    print(series_tokens.describe())
+    print(series_tokens.value_counts())
+    print(series_tok_lens.describe())
 
     
-    # # determine how many unknown tokens we're getting 
-    # texts_with_unk = [
-    #     text for text in tqdm(dataset.warao_col) 
-    #     if tokenizer.unk_token_id in tokenizer(text).input_ids
-    # ]
-    # print(len(texts_with_unk))
-    # # 163
-    # s = random.sample(texts_with_unk, 5)
+    # determine how many unknown tokens we're getting 
+    texts_with_unk = [
+        text for text in tqdm(dataset[warao_col], desc="Checking for unknown tokens") 
+        if tokenizer.unk_token_id in tokenizer(text).input_ids
+    ]
+
+    num_warao_unk_toks = len(texts_with_unk)
+    logger.info(f"\n{"Number of Warao sentences with unknown tokens: {num_warao_unk_toks}" if num_warao_unk_toks > 0 else "No unknown tokens generated for Warao sentences"}")
 
 
     # avg_token_length = sum(token_lengths) / len(token_lengths)
