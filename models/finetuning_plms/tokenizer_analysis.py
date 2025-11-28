@@ -61,6 +61,10 @@ def tok_analysis(dataset=None, tokenizer=None, col_name=None, logger=None):
 
     # Tokenization analysis
     all_tokens = generate_tokens(tokenizer, dataset, col_name)
+    filename = f'{language.lower()}_tokens.csv'
+    df_all_tokens = pd.DataFrame(all_tokens, columns=['token']).to_csv(filename, index=False)
+    df_all_tokens.to_csv(filename, index=False)
+    logger.info(f"Saved tokens to {filename}")
     
 
     # breakpoint()
@@ -70,7 +74,7 @@ def tok_analysis(dataset=None, tokenizer=None, col_name=None, logger=None):
     # determine how many unknown tokens we're getting 
     texts_with_unk = unknown_tokens(tokenizer, dataset, col_name)
     num_unk_toks = len(texts_with_unk)
-    logger.info(f"\n{"Number of {language} sentences with unknown tokens: {num_unk_toks}" if num_unk_toks > 0 else "No unknown tokens generated for {language} sentences"}")
+    logger.info(f"\n{f"Number of {language} sentences with unknown tokens: {num_unk_toks}" if num_unk_toks > 0 else f"No unknown tokens generated for {language} sentences"}")
 
     return 
 
@@ -116,7 +120,7 @@ def analysis(model_name, dataset_path):
 
 
 if __name__ == "__main__":
-    model_name = "facebook/m2m100_418M"
+    model_name = "facebook/mBART-large-50"
     dataset_path = "./input/parallel_train.csv"
 
     analysis(model_name, dataset_path)
