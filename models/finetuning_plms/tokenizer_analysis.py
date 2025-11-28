@@ -24,18 +24,18 @@ def generate_tokens(tokenizer, dataset, col_name):
         all_tokens += tokens
     return all_tokens
 
-def unknown_tokens(tokenizer, dataset, col_name, logger):
+def unknown_tokens(tokenizer, dataset, col_name):
     texts_with_unk = [
         text for text in tqdm(dataset[col_name], desc="Checking for unknown tokens") 
         if tokenizer.unk_token_id in tokenizer(text).input_ids
     ]
 
-    num_warao_unk_toks = len(texts_with_unk)
-    logger.info(f"\n{"Number of Warao sentences with unknown tokens: {num_warao_unk_toks}" if num_warao_unk_toks > 0 else "No unknown tokens generated for Warao sentences"}")
+    return texts_with_unk
+    
 
-def compute_stats(all_tokens):
+def compute_stats(all_tokens, language):
     all_uniq_tokens = list(set(all_tokens))
-    print(f"\nTotal unique tokens in Warao dataset: {len(all_uniq_tokens)}")
+    print(f"\nTotal unique tokens in {language} dataset: {len(all_uniq_tokens)}")
     print(f"\nPreview of unique tokens: {all_uniq_tokens[:5]}")
     series_tokens = pd.Series(all_tokens)
     series_tok_lens = series_tokens.apply(len)
@@ -43,7 +43,9 @@ def compute_stats(all_tokens):
     print(series_tokens.value_counts())
     print(series_tok_lens.describe())
 
-def tok_analysis(model_name=None, dataset_path=None, col_name=None):
+
+
+def tok_analysis(dataset=None, tokenizer=None, col_name=None, logger=None):
     """
     Analyze tokenizer of a given pre-trained LM on Warao dataset.
     We will use only our Warao training dataset
@@ -52,7 +54,37 @@ def tok_analysis(model_name=None, dataset_path=None, col_name=None):
         model_name (str): The name of the pre-trained,
 
     """
-    # set up logger
+    language = col_name.split('_')[0].capitalize()
+
+    logger.info(f"\nTokenizer analysis for {language} training sentences")
+    logger.info(f"\nUsing model: {model_name}")
+
+    # Tokenization analysis
+    all_tokens = generate_tokens(tokenizer, dataset, col_name)
+    
+
+    # breakpoint()
+    compute_stats(all_tokens, language)
+
+    
+    # determine how many unknown tokens we're getting 
+    texts_with_unk = unknown_tokens(tokenizer, dataset, col_name)
+    num_unk_toks = len(texts_with_unk)
+    logger.info(f"\n{"Number of {language} sentences with unknown tokens: {num_unk_toks}" if num_unk_toks > 0 else "No unknown tokens generated for {language} sentences"}")
+
+    return 
+
+
+
+
+def analysis(model_name, dataset_path):
+    """
+    Run tokenizer analysis on Warao-Spanish parallel training dataset
+    1. Token statistics
+    2. Unknown tokens
+    """
+
+    # set up logger -- load only once
     logging.basicConfig(
       format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
       datefmt="%m/%d/%Y %H:%M:%S",
@@ -60,44 +92,31 @@ def tok_analysis(model_name=None, dataset_path=None, col_name=None):
     )
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
+    
 
-    logger.info(f"\nTokenizer analysis for {col_name.split('_')[0].capitalize()} training sentences")
-    logger.info(f"\nUsing model: {model_name}")
-
-    # load tokenizer
+    # load tokenizer -- load only once
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-    # load dataset
+    # load dataset -- load only once
     data_files = {'train': dataset_path}
     dataset = load_dataset('csv', data_files=data_files)['train']
     logger.info(f"\nLoaded dataset from {dataset_path}")
     print(f"\nDataset preview: {dataset[:2]}")
 
-    # Tokenization analysis
-    all_tokens = generate_tokens(tokenizer, dataset, col_name, logger)
-    
 
-    # breakpoint()
-    compute_stats(all_tokens=all_tokens)
+    warao_col = 'warao_sentence'
+    spanish_col = 'spanish_sentence'
+    # run analysis for Warao sentences
+    tok_analysis(dataset, tokenizer, warao_col, logger)
 
-    
-    # determine how many unknown tokens we're getting 
-    unknown_tokens(tokenizer, dataset, col_name, logger)
+    # run analysis for Spanish sentences
+    tok_analysis(dataset, tokenizer, spanish_col, logger)
 
 
-    # avg_token_length = sum(token_lengths) / len(token_lengths)
-    # print(f"Average token length for {model_name} on {dataset_path}: {avg_token_length}")
 
-    return 
 
 if __name__ == "__main__":
     model_name = "facebook/m2m100_418M"
     dataset_path = "./input/parallel_train.csv"
-    warao_col = 'warao_sentence'
-    spanish_col = 'spanish_sentence'
 
-    # run analysis for Warao sentences
-    tok_analysis(model_name, dataset_path, warao_col)
-
-    # run analysis for Spanish sentences
-    tok_analysis(model_name, dataset_path, spanish_col)
+    analysis(model_name, dataset_path)
