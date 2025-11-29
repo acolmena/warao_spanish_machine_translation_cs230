@@ -59,10 +59,9 @@ def tok_analysis(dataset=None, tokenizer=None, col_name=None, logger=None):
     logger.info(f"\nTokenizer analysis for {language} training sentences")
     logger.info(f"\nUsing model: {model_name}")
 
-    # Tokenization analysis
     all_tokens = generate_tokens(tokenizer, dataset, col_name)
     filename = f'{language.lower()}_tokens.csv'
-    df_all_tokens = pd.DataFrame(all_tokens, columns=['token']).to_csv(filename, index=False)
+    df_all_tokens = pd.DataFrame(all_tokens, columns=['token'])
     df_all_tokens.to_csv(filename, index=False)
     logger.info(f"Saved tokens to {filename}")
     
