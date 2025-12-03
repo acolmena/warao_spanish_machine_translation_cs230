@@ -62,7 +62,7 @@ BATCH_SIZE = 16
 LEARNING_RATE = 1e-4
 NUM_BEAMS = 4
 WANDB_RUN_NAME = f"{MODEL}_full_ft"
-WANDB_PROJECT = "huggingface" # project name for normal full fts
+WANDB_PROJECT = "warao_spanish_mt" if RUN_SWEEP else "huggingface" # project name for normal full fts
 LOG_STEPS = 1 if TRAIN_FILE == "toy_data.csv" else 100
 WARMUP_STEPS = 0
 
@@ -263,7 +263,6 @@ def start_training(model_name_or_path, train_file, val_file, test_file, output_d
         return result
     
     # if is_t5_model and batch_size > 8:
-    #     # Use gradient accumulation for larger effective batch sizes
     #     gradient_accumulation_steps = batch_size // 8
     #     effective_batch_size = 8
     #     logger.info(f"Using gradient accumulation: {gradient_accumulation_steps} steps for effective batch size {batch_size}")
@@ -401,7 +400,7 @@ def sweep_train():
         do_pred_on_test=do_pred_on_test,
         do_evaluate=do_evaluate,
         do_eval_on_test=do_eval_on_test,
-        wandb_project="warao_spanish_mt",
+        wandb_project=WANDB_PROJECT,
         wandb_run_name=f"{MODEL}_sweep",
         use_wandb=True,
         logging_steps=LOG_STEPS,
