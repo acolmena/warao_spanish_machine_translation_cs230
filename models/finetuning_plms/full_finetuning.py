@@ -42,7 +42,7 @@ HP_TUNE_PROJECT_NAME = "warao_spanish_mt"
 RUN_SWEEP = True
 HP_COUNT = 5  # number of times agent will run wandb sweep
 
-MODEL_NAME = list(model_configs.keys())[4]
+MODEL_NAME = list(model_configs.keys())[5]
 MODEL = MODEL_NAME.split('/')[1]
 do_predictions=False if RUN_SWEEP else True  # dont output predictions when doing HP tuning
 do_pred_on_test=False
@@ -50,9 +50,9 @@ do_evaluate=False if RUN_SWEEP else True # no point in runnning eval on val set 
 do_eval_on_test=False # if False, does eval on val set
 
 
-TRAIN_FILE = "parallel_train.csv"
-VAL_FILE = "parallel_val.csv"
-TEST_FILE = "parallel_test.csv"
+TRAIN_FILE = "final_parallel_train.csv"
+VAL_FILE = "final_parallel_val.csv"
+TEST_FILE = "final_parallel_test.csv"
 OUTPUT_DIR = f"./{MODEL}-finetuned-warao-es"
 SOURCE_CODE = model_configs[MODEL_NAME][0]
 TARGET_CODE = model_configs[MODEL_NAME][1]
@@ -62,7 +62,7 @@ BATCH_SIZE = 16
 LEARNING_RATE = 1e-4
 NUM_BEAMS = 4
 WANDB_RUN_NAME = f"{MODEL}_full_ft"
-WANDB_PROJECT = "warao_spanish_mt" if RUN_SWEEP else "huggingface" # project name for normal full fts
+WANDB_PROJECT = "huggingface" # project name for normal full fts
 LOG_STEPS = 1 if TRAIN_FILE == "toy_data.csv" else 100
 WARMUP_STEPS = 0
 
@@ -77,17 +77,17 @@ sweep_config = {
     'parameters': {
         'learning_rate': {
             'distribution': 'log_uniform_values',
-            'min': 1e-6,  # for non-t5 models
-            'max': 5e-5
-            # 'min': 1e-4, # for t5 models
-            # 'max': 5e-3
+            # 'min': 1e-5,  # for non-t5 models
+            # 'max': 5e-4
+            'min': 1e-4, # for t5 models
+            'max': 5e-3
         },
         'batch_size': {
-            'values': [32]
+            'values': [8, 16]
         },
         'num_train_epochs': {
-            'values': [3, 5] # for non-t5 models
-            # 'values': [5, 7, 10] # for t5 models
+            # 'values': [3, 5] # for non-t5 models
+            'values': [5, 7] # for t5 models
             
         },
         'weight_decay': {
@@ -263,6 +263,7 @@ def start_training(model_name_or_path, train_file, val_file, test_file, output_d
         return result
     
     # if is_t5_model and batch_size > 8:
+    #     # Use gradient accumulation for larger effective batch sizes
     #     gradient_accumulation_steps = batch_size // 8
     #     effective_batch_size = 8
     #     logger.info(f"Using gradient accumulation: {gradient_accumulation_steps} steps for effective batch size {batch_size}")
@@ -271,7 +272,7 @@ def start_training(model_name_or_path, train_file, val_file, test_file, output_d
     training_args = Seq2SeqTrainingArguments(
         output_dir=output_dir,
         eval_strategy="epoch",
-        save_strategy="epoch",
+        save_strategy="no",
         learning_rate=learning_rate,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
@@ -285,7 +286,7 @@ def start_training(model_name_or_path, train_file, val_file, test_file, output_d
         logging_steps=logging_steps,
         report_to="wandb" if use_wandb else "none",
         run_name=wandb_run_name,
-        load_best_model_at_end=True,
+        load_best_model_at_end=False,
         metric_for_best_model="bleu",
         greater_is_better=True,
         gradient_checkpointing=True if "nllb" in model_name_or_path or "mbart" in model_name_or_path else False, # trade comp time for memory
@@ -368,58 +369,59 @@ def start_training(model_name_or_path, train_file, val_file, test_file, output_d
 
 # perform wandb sweep for hyperparameter tuning
 def sweep_train():
-  # Clear at start
-  if torch.cuda.is_available():
-    torch.cuda.empty_cache()
-    torch.cuda.reset_peak_memory_stats()
-        
-  wandb.init()
-
-  config = wandb.config # HPs stored here
-
-  sweep_output_dir = f"{OUTPUT_DIR}_sweep_{wandb.run.id}"
-
-  try:
-    trainer = start_training(
-        model_name_or_path=MODEL_NAME,
-        train_file=TRAIN_FILE,
-        val_file=VAL_FILE,
-        test_file=TEST_FILE,
-        output_dir=sweep_output_dir,
-        source_lang=SOURCE_CODE,
-        target_lang=TARGET_CODE,
-        max_source_length=MAX_LEN,
-        max_target_length=MAX_LEN,
-        num_train_epochs=config.num_train_epochs,
-        batch_size=config.batch_size,
-        learning_rate=config.learning_rate,
-        num_beams=NUM_BEAMS,
-        weight_decay=config.weight_decay,
-        warmup_steps=WARMUP_STEPS,
-        do_predictions=do_predictions,
-        do_pred_on_test=do_pred_on_test,
-        do_evaluate=do_evaluate,
-        do_eval_on_test=do_eval_on_test,
-        wandb_project=WANDB_PROJECT,
-        wandb_run_name=f"{MODEL}_sweep",
-        use_wandb=True,
-        logging_steps=LOG_STEPS,
-    )
-    # delete model and trainer to free memory
-    del trainer
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-  except Exception as e:
-    print(f"Error in sweep run: {e}") 
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-  finally:  # cleanup even when we have error
-    gc.collect()
+    # Clear at start
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
+
+            
+    wandb.init()
+
+    config = wandb.config # HPs stored here
+
+    sweep_output_dir = f"{OUTPUT_DIR}_sweep_{wandb.run.id}"
+
+    try:
+        trainer = start_training(
+            model_name_or_path=MODEL_NAME,
+            train_file=TRAIN_FILE,
+            val_file=VAL_FILE,
+            test_file=TEST_FILE,
+            output_dir=sweep_output_dir,
+            source_lang=SOURCE_CODE,
+            target_lang=TARGET_CODE,
+            max_source_length=MAX_LEN,
+            max_target_length=MAX_LEN,
+            num_train_epochs=config.num_train_epochs,
+            batch_size=config.batch_size,
+            learning_rate=config.learning_rate,
+            num_beams=NUM_BEAMS,
+            weight_decay=config.weight_decay,
+            warmup_steps=WARMUP_STEPS,
+            do_predictions=do_predictions,
+            do_pred_on_test=do_pred_on_test,
+            do_evaluate=do_evaluate,
+            do_eval_on_test=do_eval_on_test,
+            wandb_project="warao_spanish_mt",
+            wandb_run_name=f"{MODEL}_sweep",
+            use_wandb=True,
+            logging_steps=LOG_STEPS,
+        )
+        # delete model and trainer to free memory
+        del trainer
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    except Exception as e:
+        print(f"Error in sweep run: {e}") 
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    finally:  # cleanup even when we have error
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
 
 
 device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
