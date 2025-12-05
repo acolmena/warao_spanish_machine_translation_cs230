@@ -30,6 +30,7 @@ model_configs = {
     "facebook/mbart-large-50-many-to-many-mmt": ("pt_XX", "es_XX"),
     # "facebook/mbart-large-50-one-to-many-mmt": ("pt_XX", "es_XX"),
     "facebook/nllb-200-distilled-600M": ("wro_Latn", "spa_Latn"),  # fake source code for this model seems to work best
+    "facebook/nllb-200-distilled-1.3B": ("wro_Latn", "spa_Latn"),  # fake source code for this model seems to work best
     # "google/mt5-base": ("Warao", "Spanish"),
     "google/mt5-small": ("Warao", "Spanish"),
     # "google/byt5-base": ("Warao", "Spanish"),
@@ -39,7 +40,7 @@ model_configs = {
 
 # hyperparameter tuning
 HP_TUNE_PROJECT_NAME = "warao_spanish_mt"
-RUN_SWEEP = True
+RUN_SWEEP = False
 HP_COUNT = 5  # number of times agent will run wandb sweep
 
 MODEL_NAME = list(model_configs.keys())[5]
@@ -59,12 +60,19 @@ TARGET_CODE = model_configs[MODEL_NAME][1]
 MAX_LEN = 128
 EPOCHS = 3
 BATCH_SIZE = 16
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 1.8251189951163445e-4
 NUM_BEAMS = 4
+WEIGHT_DECAY = 0.023684274396049754
 WANDB_RUN_NAME = f"{MODEL}_full_ft"
-WANDB_PROJECT = "huggingface" # project name for normal full fts
-LOG_STEPS = 1 if TRAIN_FILE == "toy_data.csv" else 100
+WANDB_PROJECT = "warao_spanish_mt" # project name for normal full fts
+LOG_STEPS = 1 if TRAIN_FILE == "toy_data.csv" else 20
 WARMUP_STEPS = 0
+
+# LORA params
+use_lora=True 
+lora_r= 16  # 8
+lora_alpha = 32 # 16
+lora_dropout =  0.05 #0.1
 
 
 
@@ -123,8 +131,11 @@ import wandb
 from wandb import Table
 import gc
 import os
+from transformers import BitsAndBytesConfig
+
 if "nllb" in MODEL_NAME or "mbart" in MODEL_NAME:
     os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+from peft import LoraConfig, get_peft_model, TaskType, prepare_model_for_kbit_training
 
 
 # FBTs depend on the model type
@@ -147,7 +158,8 @@ def start_training(model_name_or_path, train_file, val_file, test_file, output_d
                   do_predictions=True, do_pred_on_test=False,
                   do_evaluate=True, do_eval_on_test=False, wandb_project="full_ft",
                   wandb_run_name=None, weight_decay=0.01, warmup_steps=0, use_wandb=False,
-                  logging_steps=100):
+                  logging_steps=100,
+                  use_lora=False, lora_r=16, lora_alpha=32, lora_dropout=0.1):
 
     # set up logging
     logging.basicConfig(
@@ -192,15 +204,57 @@ def start_training(model_name_or_path, train_file, val_file, test_file, output_d
     print("=" * 50)
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
     print_gpu_memory() 
-    model = AutoModelForSeq2SeqLM.from_pretrained(
+    if "nllb" in model_name_or_path and "1.3B" in model_name_or_path:
+        # Use 8-bit quantization for the large model
+        quantization_config = BitsAndBytesConfig(
+            load_in_8bit=True,
+            llm_int8_threshold=6.0
+        )
+        model = AutoModelForSeq2SeqLM.from_pretrained(
+            model_name_or_path,
+            quantization_config=quantization_config,
+            device_map="auto"
+        )
+    else:
+        model = AutoModelForSeq2SeqLM.from_pretrained(
                                                     model_name_or_path, 
                                                     # dtype=torch.float16 if "nllb" or "mbart" in model_name_or_path else torch.float32
                                                 )
     print_gpu_memory() 
-    
 
     # check if model is a T5-based model
     is_t5_model = "mt5" in model_name_or_path or "byt5" in model_name_or_path
+
+    # USE LORA ON BIGGER MODEL TO TRY TO REDUCE UNDERFITTING
+    if use_lora:
+        print(f"\n{'='*60}")
+        print(f"Applying LoRA to {model_name_or_path}...")
+        print(f"{'='*60}")
+        
+        # Determine correct target modules based on model type
+        if is_t5_model:
+            target_modules = ["q", "v"]
+        else:
+            target_modules = ["q_proj", "v_proj"]
+        
+        print(f"\nUsing target modules: {target_modules}")
+        print(f"LoRA rank (r): {lora_r}, alpha: {lora_alpha}, dropout: {lora_dropout}")
+        
+        lora_config = LoraConfig(
+            task_type=TaskType.SEQ_2_SEQ_LM,
+            inference_mode=False,
+            r=lora_r,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            target_modules=target_modules,
+        )
+        
+        model = get_peft_model(model, lora_config)
+        model.print_trainable_parameters()
+    print_gpu_memory() 
+    
+
+   
 
     # T5-based models dont have language codes
     if not is_t5_model:
@@ -228,7 +282,12 @@ def start_training(model_name_or_path, train_file, val_file, test_file, output_d
         model_inputs["labels"] = labels["input_ids"]
         return model_inputs
 
-    tokenized_datasets = raw_datasets.map(preprocess_function, batched=True)
+    # Apply preprocessing and REMOVE the original text columns (for LoRA to work)
+    tokenized_datasets = raw_datasets.map(
+        preprocess_function, 
+        batched=True,
+        remove_columns=raw_datasets["train"].column_names  
+    )
 
     data_collator = DataCollatorForSeq2Seq(tokenizer, model=model)
 
@@ -262,24 +321,18 @@ def start_training(model_name_or_path, train_file, val_file, test_file, output_d
         result = {k: round(v, 4) for k, v in result.items()}
         return result
     
-    # if is_t5_model and batch_size > 8:
-    #     # Use gradient accumulation for larger effective batch sizes
-    #     gradient_accumulation_steps = batch_size // 8
-    #     effective_batch_size = 8
-    #     logger.info(f"Using gradient accumulation: {gradient_accumulation_steps} steps for effective batch size {batch_size}")
-
 
     training_args = Seq2SeqTrainingArguments(
         output_dir=output_dir,
         eval_strategy="epoch",
         save_strategy="no",
+        predict_with_generate=True,
         learning_rate=learning_rate,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
         weight_decay=weight_decay,
         save_total_limit=1,
         num_train_epochs=num_train_epochs,
-        predict_with_generate=True,
         generation_max_length=max_target_length,
         generation_num_beams=num_beams,
         logging_dir=os.path.join(output_dir, "logs"),
@@ -289,8 +342,9 @@ def start_training(model_name_or_path, train_file, val_file, test_file, output_d
         load_best_model_at_end=False,
         metric_for_best_model="bleu",
         greater_is_better=True,
-        gradient_checkpointing=True if "nllb" in model_name_or_path or "mbart" in model_name_or_path else False, # trade comp time for memory
-        fp16=True if "nllb" in model_name_or_path or "mbart" in model_name_or_path else False, # use mixed precision for large models
+        gradient_checkpointing=False if use_lora else True,
+        fp16=True if "nllb" in model_name_or_path or "mbart" in model_name_or_path else False, # mixed precision for large models
+        remove_unused_columns=False,
     )
 
     trainer = Seq2SeqTrainer(
@@ -406,6 +460,10 @@ def sweep_train():
             wandb_run_name=f"{MODEL}_sweep",
             use_wandb=True,
             logging_steps=LOG_STEPS,
+            use_lora=use_lora, 
+            lora_r=lora_r, 
+            lora_alpha=lora_alpha, 
+            lora_dropout=lora_dropout
         )
         # delete model and trainer to free memory
         del trainer
@@ -433,6 +491,7 @@ if RUN_SWEEP: # for hyperparameter tuning
   sweep_id = wandb.sweep(sweep_config, project=HP_TUNE_PROJECT_NAME)
   wandb.agent(sweep_id, function=sweep_train, count=HP_COUNT)
 else:
+  wandb.init()
   start_training(
       model_name_or_path=MODEL_NAME,
       train_file=TRAIN_FILE,
@@ -453,10 +512,14 @@ else:
       do_pred_on_test=do_pred_on_test,
       do_evaluate=do_evaluate,
       do_eval_on_test=do_eval_on_test,
-      wandb_project="huggingface",
-      wandb_run_name=WANDB_RUN_NAME,
+      wandb_project=WANDB_PROJECT,
+      wandb_run_name=f"{MODEL}_best",
       use_wandb=True,
       logging_steps=LOG_STEPS,
+      use_lora=use_lora, 
+      lora_r=lora_r, 
+      lora_alpha=lora_alpha, 
+      lora_dropout=lora_dropout
   )
 
 wandb.finish()
