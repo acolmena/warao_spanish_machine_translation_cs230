@@ -235,7 +235,7 @@ def start_training(model_name_or_path, train_file, val_file, test_file, output_d
         if is_t5_model:
             target_modules = ["q", "v"]
         else:
-            target_modules = ["q_proj", "v_proj"]
+            target_modules = ["q_proj", "v_proj", "k_proj", "out_proj"] # all attention layers on 
         
         print(f"\nUsing target modules: {target_modules}")
         print(f"LoRA rank (r): {lora_r}, alpha: {lora_alpha}, dropout: {lora_dropout}")
